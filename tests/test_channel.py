@@ -189,3 +189,124 @@ class TestListVideosPagination:
         ids = [v["id"] for v in result["videos"]]
         assert ids == ["vid_A", "vid_B"]
         assert len(ids) == len(set(ids))
+
+
+class TestQuotaNotChargedWithoutRequest:
+    """Quota must only be charged for requests that are actually sent.
+
+    Argument validation happens before the client is built, and the client is
+    built before quota is charged, so neither a validation error nor an auth
+    failure records phantom units.
+    """
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{}, {"channel_id": "", "handle": ""}, {"channel_id": None, "handle": None, "mine": False}],
+    )
+    def test_get_channel_missing_identifier_charges_no_quota(self, kwargs):
+        from youtube_mcp.tools.channel import youtube_get_channel
+        from youtube_mcp.utils.quota import QuotaTracker
+
+        tracker = QuotaTracker()
+        mock_auth = MagicMock()
+        with patch("youtube_mcp.tools.channel.quota", tracker), patch(
+            "youtube_mcp.tools.channel.auth", mock_auth
+        ):
+            result = youtube_get_channel(**kwargs)
+
+        assert result == {"error": "Provide channel_id, handle, or set mine=True"}
+        assert tracker.used == 0
+        mock_auth.build_youtube_service.assert_not_called()
+
+    def test_get_channel_missing_identifier_returns_error_when_quota_exhausted(self):
+        from youtube_mcp.tools.channel import youtube_get_channel
+        from youtube_mcp.utils.quota import QuotaTracker
+
+        tracker = QuotaTracker(daily_limit=0)
+        with patch("youtube_mcp.tools.channel.quota", tracker), patch(
+            "youtube_mcp.tools.channel.auth", MagicMock()
+        ):
+            result = youtube_get_channel()
+
+        assert result == {"error": "Provide channel_id, handle, or set mine=True"}
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{}, {"channel_id": "", "playlist_id": ""}, {"channel_id": None, "mine": False}],
+    )
+    def test_list_videos_missing_identifier_charges_no_quota(self, kwargs):
+        from youtube_mcp.tools.channel import youtube_list_videos
+        from youtube_mcp.utils.quota import QuotaTracker
+
+        tracker = QuotaTracker()
+        mock_auth = MagicMock()
+        with patch("youtube_mcp.tools.channel.quota", tracker), patch(
+            "youtube_mcp.tools.channel.auth", mock_auth
+        ):
+            result = youtube_list_videos(**kwargs)
+
+        assert result == {"error": "Provide channel_id, playlist_id, or set mine=True"}
+        assert tracker.used == 0
+        mock_auth.build_youtube_service.assert_not_called()
+
+    def test_list_videos_missing_identifier_returns_error_when_quota_exhausted(self):
+        from youtube_mcp.tools.channel import youtube_list_videos
+        from youtube_mcp.utils.quota import QuotaTracker
+
+        tracker = QuotaTracker(daily_limit=0)
+        with patch("youtube_mcp.tools.channel.quota", tracker), patch(
+            "youtube_mcp.tools.channel.auth", MagicMock()
+        ):
+            result = youtube_list_videos()
+
+        assert result == {"error": "Provide channel_id, playlist_id, or set mine=True"}
+
+    def test_list_videos_charges_only_requests_sent(self):
+        from youtube_mcp.tools.channel import youtube_list_videos
+        from youtube_mcp.utils.quota import QuotaTracker
+
+        tracker = QuotaTracker()
+        mock_auth = MagicMock()
+        mock_yt = MagicMock()
+        mock_auth.build_youtube_service.return_value = mock_yt
+        mock_yt.channels().list.return_value.execute.return_value = {
+            "items": [{"contentDetails": {"relatedPlaylists": {"uploads": "UU1"}}}]
+        }
+        mock_yt.playlistItems().list.side_effect = _make_playlist_server(total=3)
+        mock_yt.videos().list.side_effect = _make_videos_details_side_effect()
+
+        with patch("youtube_mcp.tools.channel.quota", tracker), patch(
+            "youtube_mcp.tools.channel.auth", mock_auth
+        ):
+            assert "error" in youtube_list_videos()
+            result = youtube_list_videos(channel_id="UC1", max_results=3)
+
+        assert len(result["videos"]) == 3
+        # Only the valid call's channels.list + playlistItems.list + videos.list
+        assert tracker.used == 3
+        assert mock_yt.channels().list.call_args.kwargs == {"part": "contentDetails", "id": "UC1"}
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda m: m.youtube_get_channel(handle="@x"),
+            lambda m: m.youtube_get_channel(mine=True),
+            lambda m: m.youtube_get_video("vid"),
+        ],
+        ids=["get_channel_handle", "get_channel_mine", "get_video"],
+    )
+    def test_auth_failure_charges_no_quota(self, call):
+        from youtube_mcp.auth import AuthError
+        from youtube_mcp.tools import channel
+        from youtube_mcp.utils.quota import QuotaTracker
+
+        tracker = QuotaTracker()
+        mock_auth = MagicMock()
+        mock_auth.build_youtube_service.side_effect = AuthError("client_secret.json not found")
+        with patch("youtube_mcp.tools.channel.quota", tracker), patch(
+            "youtube_mcp.tools.channel.auth", mock_auth
+        ):
+            with pytest.raises(AuthError):
+                call(channel)
+
+        assert tracker.used == 0

@@ -33,7 +33,6 @@ def youtube_search(
         published_before: ISO 8601 datetime
         region_code: ISO 3166-1 alpha-2 country code (e.g., "US")
     """
-    quota.consume("search")
     youtube = auth.build_youtube_service()
 
     params = {
@@ -53,6 +52,7 @@ def youtube_search(
     if region_code:
         params["regionCode"] = region_code
 
+    quota.consume("search")
     response = youtube.search().list(**params).execute()
 
     results = []
@@ -131,7 +131,6 @@ def youtube_trending(
         category_id: Filter by category ID (e.g., "28" for Science & Technology)
         max_results: Number of videos to return (max 50)
     """
-    quota.consume("list")
     youtube = auth.build_youtube_service()
 
     params = {
@@ -143,6 +142,7 @@ def youtube_trending(
     if category_id:
         params["videoCategoryId"] = category_id
 
+    quota.consume("list")
     response = youtube.videos().list(**params).execute()
 
     videos = [format_video_summary(v) for v in response.get("items", [])]
@@ -164,9 +164,9 @@ def youtube_get_categories(region_code: str = "US") -> dict:
     Args:
         region_code: ISO 3166-1 alpha-2 country code (e.g., "US")
     """
-    quota.consume("list")
     youtube = auth.build_youtube_service()
 
+    quota.consume("list")
     response = youtube.videoCategories().list(
         part="snippet", regionCode=region_code
     ).execute()

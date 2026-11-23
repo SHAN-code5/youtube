@@ -5,9 +5,17 @@ Workflow: list report types -> create a job -> wait for reports to generate -> d
 Reports are generated daily and available for 60 days.
 """
 
+import urllib.parse
 import urllib.request
 
 from youtube_mcp.server import auth, mcp
+
+# Report.downloadUrl values are always https URLs on this host. The OAuth
+# bearer token must never be sent anywhere else.
+_ALLOWED_DOWNLOAD_NETLOCS = {
+    "youtubereporting.googleapis.com",
+    "youtubereporting.googleapis.com:443",
+}
 
 
 @mcp.tool()
@@ -114,10 +122,26 @@ def youtube_reporting_download(download_url: str) -> dict:
     Args:
         download_url: Download URL from youtube_reporting_list_reports
     """
-    credentials = auth.credentials
-    headers = {"Authorization": f"Bearer {credentials.token}"}
+    # Validate before touching credentials: compare the exact netloc (rules out
+    # userinfo, ports and parser tricks) and reject backslashes, which other
+    # URL parsers treat as path separators.
+    parts = urllib.parse.urlsplit(download_url)
+    if (
+        parts.scheme != "https"
+        or parts.netloc.lower() not in _ALLOWED_DOWNLOAD_NETLOCS
+        or "\\" in download_url
+    ):
+        return {
+            "error": "download_url must be an https://youtubereporting.googleapis.com "
+            "report URL (from youtube_reporting_list_reports)"
+        }
 
-    req = urllib.request.Request(download_url, headers=headers)
+    credentials = auth.credentials
+
+    # Send the normalized URL that was validated, and attach the token as an
+    # unredirected header so urllib never copies it onto a redirected request.
+    req = urllib.request.Request(parts.geturl())
+    req.add_unredirected_header("Authorization", f"Bearer {credentials.token}")
     try:
         resp = urllib.request.urlopen(req, timeout=60)
         content = resp.read().decode("utf-8")

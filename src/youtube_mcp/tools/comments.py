@@ -72,7 +72,6 @@ def youtube_post_comment(video_id: str, text: str) -> dict:
         video_id: YouTube video ID to comment on
         text: Comment text
     """
-    quota.consume("insert")
     youtube = auth.build_youtube_service()
 
     body = {
@@ -86,6 +85,7 @@ def youtube_post_comment(video_id: str, text: str) -> dict:
         },
     }
 
+    quota.consume("insert")
     response = youtube.commentThreads().insert(part="snippet", body=body).execute()
 
     top = response["snippet"]["topLevelComment"]["snippet"]
@@ -106,7 +106,6 @@ def youtube_reply_to_comment(parent_id: str, text: str) -> dict:
         parent_id: The comment ID to reply to (from youtube_list_comments)
         text: Reply text
     """
-    quota.consume("insert")
     youtube = auth.build_youtube_service()
 
     body = {
@@ -116,6 +115,7 @@ def youtube_reply_to_comment(parent_id: str, text: str) -> dict:
         },
     }
 
+    quota.consume("insert")
     response = youtube.comments().insert(part="snippet", body=body).execute()
 
     return {
@@ -137,9 +137,9 @@ def youtube_delete_comment(comment_id: str) -> dict:
         comment_id: The comment ID to delete (from youtube_list_comments,
             youtube_post_comment, or youtube_reply_to_comment)
     """
-    quota.consume("delete")
     youtube = auth.build_youtube_service()
 
+    quota.consume("delete")
     youtube.comments().delete(id=comment_id).execute()
 
     return {"comment_id": comment_id, "deleted": True}

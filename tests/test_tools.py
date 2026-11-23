@@ -1,5 +1,7 @@
 """Tests for tool functions with mocked YouTube API responses."""
 
+import json
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -188,3 +190,133 @@ class TestAnalytics:
         assert len(result["results"]) == 2
         assert result["results"][0]["video"] == "short1"
         assert result["results"][0]["views"] == 10000
+
+
+class _FixedDate(date):
+    """date subclass with a pinned today() so default ranges are deterministic."""
+
+    @classmethod
+    def today(cls):
+        return cls(2026, 11, 23)
+
+
+def _analytics_mock(mock_auth, response=None):
+    """Wire a mock analytics service; return the reports().query mock."""
+    mock_analytics = MagicMock()
+    mock_auth.build_youtube_analytics_service.return_value = mock_analytics
+    query = mock_analytics.reports.return_value.query
+    query.return_value.execute.return_value = response or {
+        "columnHeaders": [{"name": "views"}],
+        "rows": [[1]],
+    }
+    return query
+
+
+def _sent_ranges(query):
+    return [(c.kwargs["startDate"], c.kwargs["endDate"]) for c in query.call_args_list]
+
+
+class TestAnalyticsPartialDates:
+    """A start_date or end_date given on its own must be kept (B4)."""
+
+    @pytest.mark.parametrize(
+        "kwargs, expected",
+        [
+            ({"start_date": "2024-01-01"}, ("2024-01-01", "2026-11-23")),
+            ({"end_date": "2024-06-30"}, ("2024-06-02", "2024-06-30")),
+        ],
+    )
+    @patch("youtube_mcp.tools.analytics.date", _FixedDate)
+    @patch("youtube_mcp.tools.analytics.auth")
+    def test_overview_keeps_single_date(self, mock_auth, kwargs, expected):
+        from youtube_mcp.tools.analytics import youtube_analytics_overview
+
+        query = _analytics_mock(mock_auth)
+        result = youtube_analytics_overview(**kwargs)
+
+        assert _sent_ranges(query) == [expected]
+        assert (result["start_date"], result["end_date"]) == expected
+
+    @pytest.mark.parametrize(
+        "kwargs, expected",
+        [
+            ({"start_date": "2023-01-01"}, ("2023-01-01", "2026-11-23")),
+            ({"end_date": "2024-06-30"}, ("2024-04-01", "2024-06-30")),
+        ],
+    )
+    @patch("youtube_mcp.tools.analytics.date", _FixedDate)
+    @patch("youtube_mcp.tools.analytics.auth")
+    def test_day_of_week_keeps_single_date(self, mock_auth, kwargs, expected):
+        from youtube_mcp.tools.analytics import youtube_analytics_day_of_week
+
+        query = _analytics_mock(mock_auth, {"columnHeaders": [], "rows": []})
+        result = youtube_analytics_day_of_week(**kwargs)
+
+        assert _sent_ranges(query) == [expected]
+        assert (result["start_date"], result["end_date"]) == expected
+
+    @pytest.mark.parametrize(
+        "kwargs, expected",
+        [
+            ({"start_date": "2023-01-01"}, ("2023-01-01", "2026-11-23")),
+            ({"end_date": "2025-03-31"}, ("2025-03-03", "2025-03-31")),
+        ],
+    )
+    @patch("youtube_mcp.tools.analytics.date", _FixedDate)
+    @patch("youtube_mcp.tools.analytics.auth")
+    def test_content_type_breakdown_keeps_single_date(self, mock_auth, kwargs, expected):
+        from youtube_mcp.tools.analytics import youtube_analytics_content_type_breakdown
+
+        query = _analytics_mock(mock_auth)
+        result = youtube_analytics_content_type_breakdown(**kwargs)
+
+        assert _sent_ranges(query) == [expected] * 3
+        assert (result["start_date"], result["end_date"]) == expected
+
+
+def _http_error(status, message):
+    from googleapiclient.errors import HttpError
+    from httplib2 import Response
+
+    content = json.dumps({"error": {"code": status, "message": message}}).encode()
+    return HttpError(Response({"status": status}), content, uri="https://youtubeanalytics.googleapis.com/v2/reports")
+
+
+class TestContentTypeBreakdownErrors:
+    """Failures must not be reported as a successful 'not available' (B14)."""
+
+    @patch("youtube_mcp.tools.analytics.auth")
+    def test_auth_error_propagates(self, mock_auth):
+        from youtube_mcp.auth import AuthError
+        from youtube_mcp.tools.analytics import youtube_analytics_content_type_breakdown
+
+        mock_auth.build_youtube_analytics_service.side_effect = AuthError(
+            "client_secret.json not found"
+        )
+
+        with pytest.raises(AuthError, match="client_secret.json not found"):
+            youtube_analytics_content_type_breakdown(
+                start_date="2026-01-01", end_date="2026-01-28"
+            )
+        # The auth failure is not retried once per content type.
+        assert mock_auth.build_youtube_analytics_service.call_count == 1
+
+    @patch("youtube_mcp.tools.analytics.auth")
+    def test_http_error_reports_cause_and_keeps_other_types(self, mock_auth):
+        from youtube_mcp.tools.analytics import youtube_analytics_content_type_breakdown
+
+        query = _analytics_mock(mock_auth)
+        query.return_value.execute.side_effect = [
+            _http_error(403, "Request had insufficient authentication scopes."),
+            {"columnHeaders": [{"name": "views"}], "rows": [[42]]},
+            {"columnHeaders": [{"name": "views"}]},
+        ]
+
+        result = youtube_analytics_content_type_breakdown(
+            start_date="2026-01-01", end_date="2026-01-28"
+        )
+        breakdown = result["breakdown"]
+
+        assert "insufficient authentication scopes" in breakdown["shorts"]["error"]
+        assert breakdown["video_on_demand"] == {"views": 42}
+        assert breakdown["live"] == {"views": 0, "estimatedMinutesWatched": 0}

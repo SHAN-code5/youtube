@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestListComments:
     @patch("youtube_mcp.tools.comments.auth")
@@ -144,3 +146,31 @@ class TestDeleteComment:
         assert result["deleted"] is True
         assert result["comment_id"] == "comment1"
         mock_quota.consume.assert_called_once_with("delete")
+
+
+class TestQuotaNotChargedOnAuthFailure:
+    """Regression (B17): quota must not be charged when building the API
+    client fails (e.g. missing client_secret.json), because no request is
+    ever sent to Google.
+    """
+
+    @pytest.mark.parametrize(
+        "tool_name, args",
+        [
+            ("youtube_post_comment", ("vid1", "Nice work!")),
+            ("youtube_reply_to_comment", ("comment1", "Thanks!")),
+            ("youtube_delete_comment", ("comment1",)),
+        ],
+    )
+    @patch("youtube_mcp.tools.comments.auth")
+    @patch("youtube_mcp.tools.comments.quota")
+    def test_auth_error_does_not_consume_quota(self, mock_quota, mock_auth, tool_name, args):
+        from youtube_mcp.auth import AuthError
+        from youtube_mcp.tools import comments
+
+        mock_auth.build_youtube_service.side_effect = AuthError("client_secret.json not found")
+
+        with pytest.raises(AuthError):
+            getattr(comments, tool_name)(*args)
+
+        mock_quota.consume.assert_not_called()

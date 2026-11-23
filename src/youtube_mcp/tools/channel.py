@@ -17,9 +17,6 @@ def youtube_get_channel(
         handle: Channel handle (e.g., "@mkbhd")
         mine: If True, get the authenticated user's own channel
     """
-    quota.consume("list")
-    youtube = auth.build_youtube_service()
-
     params = {"part": "snippet,statistics,contentDetails,brandingSettings"}
     if mine:
         params["mine"] = True
@@ -30,6 +27,8 @@ def youtube_get_channel(
     else:
         return {"error": "Provide channel_id, handle, or set mine=True"}
 
+    youtube = auth.build_youtube_service()
+    quota.consume("list")
     response = youtube.channels().list(**params).execute()
     items = response.get("items", [])
     if not items:
@@ -75,20 +74,21 @@ def youtube_list_videos(
             paging through the playlist; pass 0 or a negative value to fetch
             every video in the playlist.
     """
+    if not playlist_id and not mine and not channel_id:
+        return {"error": "Provide channel_id, playlist_id, or set mine=True"}
+
     youtube = auth.build_youtube_service()
     target = max_results if (max_results and max_results > 0) else None
 
     # Resolve uploads playlist if needed
     if not playlist_id:
-        quota.consume("list")
         ch_params = {"part": "contentDetails"}
         if mine:
             ch_params["mine"] = True
-        elif channel_id:
-            ch_params["id"] = channel_id
         else:
-            return {"error": "Provide channel_id, playlist_id, or set mine=True"}
+            ch_params["id"] = channel_id
 
+        quota.consume("list")
         ch_response = youtube.channels().list(**ch_params).execute()
         ch_items = ch_response.get("items", [])
         if not ch_items:
@@ -149,9 +149,9 @@ def youtube_get_video(video_id: str) -> dict:
     Args:
         video_id: YouTube video ID (e.g., "dQw4w9WgXcQ")
     """
-    quota.consume("list")
     youtube = auth.build_youtube_service()
 
+    quota.consume("list")
     response = (
         youtube.videos()
         .list(part="snippet,statistics,contentDetails,status,topicDetails", id=video_id)

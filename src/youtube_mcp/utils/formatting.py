@@ -1,23 +1,37 @@
 """Response formatting utilities for LLM consumption."""
 
+import re
 from datetime import timedelta
+
+# YouTube durations: PT#H#M#S, or P#DT#H#M#S (and P#W#DT...) for videos >= 1 day,
+# and P0D for live/upcoming broadcasts.
+_ISO_DURATION = re.compile(
+    r"P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?"
+)
+
+
+def _duration_seconds(iso_duration: str) -> int | None:
+    """Parse an ISO 8601 duration into total seconds; None if missing or unparseable."""
+    if not iso_duration:
+        return None
+    m = _ISO_DURATION.fullmatch(iso_duration)
+    if not m:
+        return None
+    weeks, days, hours, minutes, seconds = (int(g) if g else 0 for g in m.groups())
+    return weeks * 604800 + days * 86400 + hours * 3600 + minutes * 60 + seconds
 
 
 def format_duration(iso_duration: str) -> str:
     """Convert ISO 8601 duration (PT1H2M3S) to human-readable format."""
-    if not iso_duration:
+    total = _duration_seconds(iso_duration)
+    if total is None:
         return "unknown"
-    s = iso_duration.replace("PT", "")
-    hours = minutes = seconds = 0
-    if "H" in s:
-        hours, s = s.split("H")
-        hours = int(hours)
-    if "M" in s:
-        minutes, s = s.split("M")
-        minutes = int(minutes)
-    if "S" in s:
-        seconds = int(s.replace("S", ""))
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
     parts = []
+    if days:
+        parts.append(f"{days}d")
     if hours:
         parts.append(f"{hours}h")
     if minutes:
@@ -63,15 +77,6 @@ def format_video_summary(video: dict) -> dict:
 
 def _is_likely_short(iso_duration: str) -> bool:
     """Heuristic: videos <= 60 seconds are likely Shorts."""
-    if not iso_duration:
-        return False
-    s = iso_duration.replace("PT", "")
-    total_seconds = 0
-    if "H" in s:
-        return False
-    if "M" in s:
-        minutes, s = s.split("M")
-        total_seconds += int(minutes) * 60
-    if "S" in s:
-        total_seconds += int(s.replace("S", ""))
-    return total_seconds <= 60
+    total_seconds = _duration_seconds(iso_duration)
+    # A zero length (P0D for live/upcoming broadcasts) is not a Short.
+    return total_seconds is not None and 0 < total_seconds <= 60

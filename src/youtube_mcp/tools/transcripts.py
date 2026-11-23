@@ -17,9 +17,9 @@ def youtube_list_captions(video_id: str) -> dict:
     Args:
         video_id: YouTube video ID
     """
-    quota.consume("list")
     youtube = auth.build_youtube_service()
 
+    quota.consume("caption_list")
     response = youtube.captions().list(part="snippet", videoId=video_id).execute()
 
     tracks = []
@@ -110,10 +110,10 @@ def _get_transcript_scraping(video_id: str, language: str) -> dict:
 
 def _get_transcript_official(video_id: str, language: str) -> dict:
     """Get transcript using official YouTube Data API (own videos only)."""
-    quota.consume("list")
     youtube = auth.build_youtube_service()
 
     # First, list captions to find the right track
+    quota.consume("caption_list")
     response = youtube.captions().list(part="snippet", videoId=video_id).execute()
 
     target_caption = None
@@ -131,7 +131,7 @@ def _get_transcript_official(video_id: str, language: str) -> dict:
             return {"video_id": video_id, "error": "No captions found"}
 
     # Download the caption track
-    quota.consume("list")  # caption download costs vary
+    quota.consume("caption_download")
     caption_text = (
         youtube.captions().download(id=target_caption["id"], tfmt="srt").execute()
     )

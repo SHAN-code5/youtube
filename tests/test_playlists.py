@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestListPlaylists:
     @patch("youtube_mcp.tools.playlists.auth")
@@ -240,3 +242,33 @@ class TestRemoveFromPlaylist:
         result = youtube_remove_from_playlist("PLitem1")
         assert result["removed"] is True
         mock_quota.consume.assert_called_once_with("delete")
+
+
+class TestQuotaNotChargedOnAuthFailure:
+    """Regression (B17): quota must not be charged when building the API
+    client fails (e.g. missing client_secret.json), because no request is
+    ever sent to Google.
+    """
+
+    @pytest.mark.parametrize(
+        "tool_name, args",
+        [
+            ("youtube_create_playlist", ("New Playlist",)),
+            ("youtube_update_playlist", ("PL123",)),
+            ("youtube_delete_playlist", ("PL123",)),
+            ("youtube_add_to_playlist", ("PL123", "vid1")),
+            ("youtube_remove_from_playlist", ("PLitem1",)),
+        ],
+    )
+    @patch("youtube_mcp.tools.playlists.auth")
+    @patch("youtube_mcp.tools.playlists.quota")
+    def test_auth_error_does_not_consume_quota(self, mock_quota, mock_auth, tool_name, args):
+        from youtube_mcp.auth import AuthError
+        from youtube_mcp.tools import playlists
+
+        mock_auth.build_youtube_service.side_effect = AuthError("client_secret.json not found")
+
+        with pytest.raises(AuthError):
+            getattr(playlists, tool_name)(*args)
+
+        mock_quota.consume.assert_not_called()

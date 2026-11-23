@@ -33,6 +33,19 @@ class TestFormatDuration:
     def test_none(self):
         assert format_duration(None) == "unknown"
 
+    def test_day_long_duration(self):
+        # Videos >= 1 day use P#DT#H#M#S (P and T separated); used to raise ValueError.
+        assert format_duration("P1DT2H3M4S") == "1d 2h 3m 4s"
+        assert format_duration("P1DT0H12M3S") == "1d 12m 3s"
+        assert format_duration("P2DT13M") == "2d 13m"
+        assert format_duration("P1D") == "1d"
+
+    def test_week_duration(self):
+        assert format_duration("P3W3DT20H31M21S") == "24d 20h 31m 21s"
+
+    def test_unparseable_does_not_raise(self):
+        assert format_duration("PT1.5S") == "unknown"
+
 
 class TestFormatCount:
     def test_small_number(self):
@@ -71,6 +84,19 @@ class TestIsLikelyShort:
 
     def test_empty(self):
         assert _is_likely_short("") is False
+
+    def test_day_long_duration_is_not_short(self):
+        # Used to raise ValueError ('P1DT5M') or return True ('P1D').
+        assert _is_likely_short("P1DT5M") is False
+        assert _is_likely_short("P2DT13M") is False
+        assert _is_likely_short("P1DT2H3M4S") is False
+        assert _is_likely_short("P1D") is False
+        assert _is_likely_short("P3W3DT20H31M21S") is False
+
+    def test_live_or_upcoming_zero_duration_is_not_short(self):
+        # Live/upcoming broadcasts report duration P0D; a zero length is not a Short.
+        assert _is_likely_short("P0D") is False
+        assert _is_likely_short("PT0S") is False
 
 
 class TestFormatVideoSummary:
@@ -128,3 +154,25 @@ class TestFormatVideoSummary:
         assert result["views"] == 0
         assert result["likes"] == 0
         assert result["title"] is None
+
+    def test_day_long_video(self):
+        video = {
+            "id": "long1",
+            "snippet": {"title": "24h stream archive"},
+            "statistics": {},
+            "contentDetails": {"duration": "P1DT0H12M3S"},
+        }
+        result = format_video_summary(video)
+        assert result["duration"] == "1d 12m 3s"
+        assert result["is_short"] is False
+
+    def test_live_broadcast_not_short(self):
+        for state in ("live", "upcoming"):
+            video = {
+                "id": "live1",
+                "snippet": {"title": "Stream", "liveBroadcastContent": state},
+                "statistics": {},
+                "contentDetails": {"duration": "P0D"},
+            }
+            result = format_video_summary(video)
+            assert result["is_short"] is False

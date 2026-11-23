@@ -34,6 +34,8 @@ dependencies = [
     # FastMCP was renamed to MCPServer in mcp 2.x. Floor 1.30.0 clears the
     # known mcp advisories; cap <2 until the code is migrated.
     "mcp>=1.30.0,<2",
+    # zoneinfo needs an IANA time zone database; Windows does not ship one.
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

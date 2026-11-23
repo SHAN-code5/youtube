@@ -4,8 +4,10 @@ Users must provide their own client_secret.json from their Google Cloud project.
 On first use, a browser-based OAuth consent flow runs and stores the token locally.
 """
 
+import contextlib
 import json
 import os
+import sys
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -76,9 +78,26 @@ class YouTubeAuth:
             return None
 
     def _save_token(self, creds: Credentials):
-        """Save credentials to token file."""
-        self.config_dir.mkdir(parents=True, exist_ok=True)
-        self.token_path.write_text(creds.to_json())
+        """Save credentials to token file.
+
+        The token holds the refresh token and client secret, so it is written
+        owner-only (0600) inside an owner-only (0700) directory.
+        """
+        data = creds.to_json()
+        self.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(self.token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            # The open() mode only applies to a newly created file; also
+            # tighten a pre-existing (e.g. 0644) one. os.fchmod is not
+            # available on Windows before Python 3.13.
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, 0o600)
+            else:
+                os.chmod(self.token_path, 0o600)
+        except OSError:
+            pass
+        with os.fdopen(fd, "w") as f:
+            f.write(data)
 
     @staticmethod
     def _has_required_scopes(creds: Credentials | None) -> bool:
@@ -141,7 +160,10 @@ class YouTubeAuth:
             flow = InstalledAppFlow.from_client_secrets_file(
                 str(self.client_secret_path), SCOPES
             )
-            creds = flow.run_local_server(port=0)
+            # run_local_server print()s the consent URL to sys.stdout, which
+            # is the MCP stdio JSON-RPC channel. Send it to stderr instead.
+            with contextlib.redirect_stdout(sys.stderr):
+                creds = flow.run_local_server(port=0)
             self._save_token(creds)
             self._credentials = creds
             return creds
@@ -178,6 +200,19 @@ class YouTubeAuth:
     def status(self) -> dict:
         """Return current auth status."""
         creds = self._load_token()
+        # Mirror authenticate(): a cached token missing any of SCOPES is
+        # rejected (and deleted) there whether it is valid or expired, so it
+        # must not be reported as authenticated or refreshable. Read-only:
+        # the token file is left in place.
+        if creds and not self._has_required_scopes(creds):
+            return {
+                "authenticated": False,
+                "insufficient_scopes": True,
+                "missing_scopes": sorted(set(SCOPES) - set(creds.scopes or [])),
+                "token_path": str(self.token_path),
+                "client_secret_exists": self.client_secret_path.exists(),
+                "client_secret_path": str(self.client_secret_path),
+            }
         if creds and creds.valid:
             return {
                 "authenticated": True,

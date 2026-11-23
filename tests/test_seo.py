@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestSearchSuggestions:
     @patch("youtube_mcp.tools.search.urllib.request.urlopen")
@@ -85,3 +87,46 @@ class TestGetCategories:
         result = youtube_get_categories()
         assert len(result["categories"]) == 1
         assert result["categories"][0]["id"] == "28"
+
+
+class TestQuotaNotChargedOnAuthFailure:
+    """Regression (B17): quota must not be charged when building the API
+    client fails (e.g. missing client_secret.json), because no request is
+    ever sent to Google.
+    """
+
+    @pytest.mark.parametrize(
+        "tool_name, args",
+        [
+            ("youtube_search", ("x",)),
+            ("youtube_trending", ()),
+            ("youtube_get_categories", ()),
+        ],
+    )
+    @patch("youtube_mcp.tools.search.auth")
+    @patch("youtube_mcp.tools.search.quota")
+    def test_auth_error_does_not_consume_quota(self, mock_quota, mock_auth, tool_name, args):
+        from youtube_mcp.auth import AuthError
+        from youtube_mcp.tools import search
+
+        mock_auth.build_youtube_service.side_effect = AuthError("client_secret.json not found")
+
+        with pytest.raises(AuthError):
+            getattr(search, tool_name)(*args)
+
+        mock_quota.consume.assert_not_called()
+
+    def test_failed_searches_leave_real_tracker_untouched(self):
+        from youtube_mcp.auth import AuthError
+        from youtube_mcp.tools import search
+        from youtube_mcp.utils.quota import QuotaTracker
+
+        tracker = QuotaTracker()
+        with patch("youtube_mcp.tools.search.quota", tracker), \
+             patch("youtube_mcp.tools.search.auth") as mock_auth:
+            mock_auth.build_youtube_service.side_effect = AuthError("no secret")
+            for _ in range(3):
+                with pytest.raises(AuthError):
+                    search.youtube_search("x")
+
+        assert tracker.used == 0

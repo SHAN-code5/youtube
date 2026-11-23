@@ -33,7 +33,6 @@ def youtube_upload_video(
     if not os.path.exists(file_path):
         return {"error": f"File not found: {file_path}"}
 
-    quota.consume("video_insert")
     youtube = auth.build_youtube_service()
 
     body = {
@@ -60,6 +59,7 @@ def youtube_upload_video(
         media_body=media,
     )
 
+    quota.consume("video_insert")
     response = request.execute()
 
     return {
@@ -97,10 +97,10 @@ def youtube_update_video(
         publish_at: ISO 8601 datetime to schedule publishing (requires privacy_status="private" — either passed explicitly here or already set on the video).
         made_for_kids: COPPA self-declaration. Pass True/False to set selfDeclaredMadeForKids. Videos that were uploaded without this declaration cannot be published until it is set.
     """
-    quota.consume("list")
     youtube = auth.build_youtube_service()
 
     # Fetch current video data first
+    quota.consume("list")
     current = youtube.videos().list(part="snippet,status", id=video_id).execute()
     items = current.get("items", [])
     if not items:
@@ -124,7 +124,21 @@ def youtube_update_video(
 
     if privacy_status is not None or publish_at is not None or made_for_kids is not None:
         effective_privacy = privacy_status or status.get("privacyStatus", "private")
-        new_status = {"privacyStatus": effective_privacy}
+        # videos.update resets every mutable status property missing from the
+        # body, so carry the current settings forward and overlay the changes.
+        keep = (
+            "embeddable",
+            "license",
+            "publicStatsViewable",
+            "publishAt",
+            "selfDeclaredMadeForKids",
+            "containsSyntheticMedia",
+        )
+        new_status = {k: status[k] for k in keep if k in status}
+        new_status["privacyStatus"] = effective_privacy
+        if effective_privacy != "private":
+            # publishAt can only be set on private videos.
+            new_status.pop("publishAt", None)
         if publish_at:
             if effective_privacy != "private":
                 return {"error": "publish_at requires privacy_status='private'"}
@@ -163,11 +177,12 @@ def youtube_set_thumbnail(video_id: str, file_path: str) -> dict:
     if not os.path.exists(file_path):
         return {"error": f"File not found: {file_path}"}
 
-    quota.consume("thumbnail_set")
     youtube = auth.build_youtube_service()
 
     media = MediaFileUpload(file_path)
-    response = youtube.thumbnails().set(videoId=video_id, media_body=media).execute()
+    request = youtube.thumbnails().set(videoId=video_id, media_body=media)
+    quota.consume("thumbnail_set")
+    response = request.execute()
 
     items = response.get("items", [])
     if items:
@@ -187,9 +202,9 @@ def youtube_delete_video(video_id: str) -> dict:
     Args:
         video_id: YouTube video ID to delete
     """
-    quota.consume("delete")
     youtube = auth.build_youtube_service()
 
+    quota.consume("delete")
     youtube.videos().delete(id=video_id).execute()
 
     return {"video_id": video_id, "deleted": True}

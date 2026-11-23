@@ -4,7 +4,21 @@ YouTube Data API v3 has a default daily quota of 10,000 units.
 This module tracks usage and hard-fails when the quota is exhausted.
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+# Google resets the daily quota at midnight Pacific Time.
+try:
+    _PACIFIC = ZoneInfo("America/Los_Angeles")
+except ZoneInfoNotFoundError:
+    # No IANA time zone database (e.g. Windows without tzdata): approximate
+    # Pacific Time with a fixed UTC-8 offset instead of failing at import.
+    _PACIFIC = timezone(timedelta(hours=-8))
+
+
+def _quota_day() -> date:
+    """Return the current quota day (the date in Pacific Time)."""
+    return datetime.now(_PACIFIC).date()
 
 
 class QuotaExhaustedError(Exception):
@@ -25,8 +39,10 @@ QUOTA_COSTS = {
     "delete": 50,
     "search": 100,
     "video_insert": 1600,
+    "caption_list": 50,
     "caption_insert": 400,
     "caption_update": 450,
+    "caption_download": 200,
     "thumbnail_set": 50,
 }
 
@@ -35,10 +51,10 @@ class QuotaTracker:
     def __init__(self, daily_limit: int = 10_000):
         self.daily_limit = daily_limit
         self._used = 0
-        self._date = date.today()
+        self._date = _quota_day()
 
     def _reset_if_new_day(self):
-        today = date.today()
+        today = _quota_day()
         if today != self._date:
             self._used = 0
             self._date = today

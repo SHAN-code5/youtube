@@ -6,14 +6,26 @@ traffic sources, and more via the YouTube Analytics API.
 
 from datetime import date, timedelta
 
+from googleapiclient.errors import HttpError
+
 from youtube_mcp.server import auth, mcp
 
 
-def _default_date_range(days: int = 28) -> tuple[str, str]:
-    """Return (start_date, end_date) strings for the last N days."""
-    end = date.today()
-    start = end - timedelta(days=days)
-    return start.isoformat(), end.isoformat()
+def _default_date_range(
+    days: int = 28,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> tuple[str, str]:
+    """Return (start_date, end_date) strings, defaulting each one on its own.
+
+    end_date defaults to today; start_date defaults to N days before end_date.
+    A date the caller supplied is always kept.
+    """
+    if not end_date:
+        end_date = date.today().isoformat()
+    if not start_date:
+        start_date = (date.fromisoformat(end_date) - timedelta(days=days)).isoformat()
+    return start_date, end_date
 
 
 def _run_analytics_query(
@@ -28,8 +40,7 @@ def _run_analytics_query(
     """Execute a YouTube Analytics API query."""
     analytics = auth.build_youtube_analytics_service()
 
-    if not start_date or not end_date:
-        start_date, end_date = _default_date_range()
+    start_date, end_date = _default_date_range(28, start_date, end_date)
 
     params = {
         "ids": "channel==MINE",
@@ -286,8 +297,7 @@ def youtube_analytics_day_of_week(
         start_date: Start date (YYYY-MM-DD). Defaults to 90 days ago.
         end_date: End date (YYYY-MM-DD). Defaults to today.
     """
-    if not start_date or not end_date:
-        start_date, end_date = _default_date_range(days=90)
+    start_date, end_date = _default_date_range(90, start_date, end_date)
 
     raw = _run_analytics_query(
         metrics="views,estimatedMinutesWatched,likes,shares",
@@ -348,8 +358,7 @@ def youtube_analytics_content_type_breakdown(
         start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
         end_date: End date (YYYY-MM-DD). Defaults to today.
     """
-    if not start_date or not end_date:
-        start_date, end_date = _default_date_range()
+    start_date, end_date = _default_date_range(28, start_date, end_date)
 
     content_types = {
         "shorts": "creatorContentType==shorts",
@@ -370,8 +379,8 @@ def youtube_analytics_content_type_breakdown(
                 results[label] = data["results"][0]
             else:
                 results[label] = {"views": 0, "estimatedMinutesWatched": 0}
-        except Exception:
-            results[label] = {"error": "not available"}
+        except HttpError as e:
+            results[label] = {"error": f"query failed: {e}"}
 
     return {
         "start_date": start_date,

@@ -75,7 +75,6 @@ def youtube_create_playlist(
         description: Playlist description
         privacy_status: "private", "public", or "unlisted"
     """
-    quota.consume("insert")
     youtube = auth.build_youtube_service()
 
     body = {
@@ -88,6 +87,7 @@ def youtube_create_playlist(
         },
     }
 
+    quota.consume("insert")
     response = youtube.playlists().insert(part="snippet,status", body=body).execute()
 
     return {
@@ -115,9 +115,9 @@ def youtube_update_playlist(
         description: New description
         privacy_status: "private", "public", or "unlisted"
     """
-    quota.consume("list")
     youtube = auth.build_youtube_service()
 
+    quota.consume("list")
     current = youtube.playlists().list(part="snippet,status", id=playlist_id).execute()
     items = current.get("items", [])
     if not items:
@@ -160,9 +160,9 @@ def youtube_delete_playlist(playlist_id: str) -> dict:
     Args:
         playlist_id: Playlist ID to delete
     """
-    quota.consume("delete")
     youtube = auth.build_youtube_service()
 
+    quota.consume("delete")
     youtube.playlists().delete(id=playlist_id).execute()
 
     return {"playlist_id": playlist_id, "deleted": True}
@@ -177,7 +177,6 @@ def youtube_add_to_playlist(playlist_id: str, video_id: str, position: int | Non
         video_id: Video ID to add
         position: Position in the playlist (0-based). Defaults to end.
     """
-    quota.consume("insert")
     youtube = auth.build_youtube_service()
 
     body = {
@@ -192,6 +191,7 @@ def youtube_add_to_playlist(playlist_id: str, video_id: str, position: int | Non
     if position is not None:
         body["snippet"]["position"] = position
 
+    quota.consume("insert")
     response = youtube.playlistItems().insert(part="snippet", body=body).execute()
 
     return {
@@ -212,9 +212,9 @@ def youtube_remove_from_playlist(playlist_item_id: str) -> dict:
     Args:
         playlist_item_id: The playlist item ID (not the video ID)
     """
-    quota.consume("delete")
     youtube = auth.build_youtube_service()
 
+    quota.consume("delete")
     youtube.playlistItems().delete(id=playlist_item_id).execute()
 
     return {"playlist_item_id": playlist_item_id, "removed": True}

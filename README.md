@@ -76,15 +76,21 @@ Alternatively, set the `YOUTUBE_MCP_CLIENT_SECRET` environment variable to the p
 
 ## Installation
 
+This repository is a fork of [pauling-ai/youtube-mcp-server](https://github.com/pauling-ai/youtube-mcp-server) with bug fixes applied. Install it straight from GitHub:
+
 ```bash
-pip install youtube-studio-mcp
+pip install git+https://github.com/SHAN-code5/youtube.git
 ```
 
 Or with uv:
 
 ```bash
-uv pip install youtube-studio-mcp
+uv pip install git+https://github.com/SHAN-code5/youtube.git
 ```
+
+> **Note:** `pip install youtube-studio-mcp` installs the original upstream release from PyPI, which does not include these fixes.
+
+Either way, the installed command is still `youtube-studio-mcp`.
 
 ## MCP Client Configuration
 
@@ -261,8 +267,8 @@ Use `youtube_auth_status` to check current quota usage.
 ## Development
 
 ```bash
-git clone https://github.com/pauling-ai/youtube-studio-mcp.git
-cd youtube-studio-mcp
+git clone https://github.com/SHAN-code5/youtube.git
+cd youtube
 uv venv && uv pip install -e ".[dev]"
 .venv/bin/python -m pytest tests/ -v
 ```
